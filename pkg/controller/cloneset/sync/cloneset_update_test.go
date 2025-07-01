@@ -23,18 +23,19 @@ import (
 	"testing"
 	"time"
 
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	testingclock "k8s.io/utils/clock/testing"
-
+	clonesetstatus "github.com/openkruise/kruise/pkg/controller/cloneset/status"
 	apps "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	intstrutil "k8s.io/apimachinery/pkg/util/intstr"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
+	testingclock "k8s.io/utils/clock/testing"
+	"k8s.io/utils/ptr"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -139,8 +140,9 @@ func TestUpdate(t *testing.T) {
 		{
 			name: "recreate update 1",
 			cs: &appsv1alpha1.CloneSet{Spec: appsv1alpha1.CloneSetSpec{
-				Replicas:       getInt32Pointer(1),
-				UpdateStrategy: appsv1alpha1.CloneSetUpdateStrategy{Type: appsv1alpha1.RecreateCloneSetUpdateStrategyType},
+				Replicas:                getInt32Pointer(1),
+				UpdateStrategy:          appsv1alpha1.CloneSetUpdateStrategy{Type: appsv1alpha1.RecreateCloneSetUpdateStrategyType},
+				ProgressDeadlineSeconds: ptr.To(int32(600)),
 			}},
 			updateRevision: &apps.ControllerRevision{ObjectMeta: metav1.ObjectMeta{Name: "rev_new"}},
 			pods: []*v1.Pod{
@@ -968,7 +970,11 @@ func TestUpdate(t *testing.T) {
 			if len(mc.revisions) > 0 {
 				currentRevision = mc.revisions[0]
 			}
-			if err := ctrl.Update(mc.cs, currentRevision, mc.updateRevision, mc.revisions, mc.pods, mc.pvcs); err != nil {
+
+			statusCalculator := clonesetstatus.NewStatusUpdater(fakeClient)
+			newStatus := statusCalculator.CalculateStatus(mc.cs, currentRevision.Name, mc.updateRevision.Name, mc.cs.Spec.Selector.String(), 0, mc.pods)
+
+			if err := ctrl.Update(mc.cs, newStatus, currentRevision, mc.updateRevision, mc.revisions, mc.pods, mc.pvcs); err != nil {
 				t.Fatalf("Failed to test %s, manage error: %v", mc.name, err)
 			}
 			podList := v1.PodList{}

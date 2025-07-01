@@ -37,7 +37,7 @@ type Interface interface {
 		pods []*v1.Pod, pvcs []*v1.PersistentVolumeClaim,
 	) (bool, error)
 
-	Update(cs *appsv1alpha1.CloneSet,
+	Update(cs *appsv1alpha1.CloneSet, newStatus *appsv1alpha1.CloneSetStatus,
 		currentRevision, updateRevision *apps.ControllerRevision, revisions []*apps.ControllerRevision,
 		pods []*v1.Pod, pvcs []*v1.PersistentVolumeClaim,
 	) error

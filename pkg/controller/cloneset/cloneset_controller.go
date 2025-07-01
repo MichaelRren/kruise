@@ -26,6 +26,7 @@ import (
 	kruiseclient "github.com/openkruise/kruise/pkg/client"
 	clonesetcore "github.com/openkruise/kruise/pkg/controller/cloneset/core"
 	revisioncontrol "github.com/openkruise/kruise/pkg/controller/cloneset/revision"
+	clonesetstatus "github.com/openkruise/kruise/pkg/controller/cloneset/status"
 	synccontrol "github.com/openkruise/kruise/pkg/controller/cloneset/sync"
 	clonesetutils "github.com/openkruise/kruise/pkg/controller/cloneset/utils"
 	"github.com/openkruise/kruise/pkg/features"
@@ -117,7 +118,7 @@ func newReconciler(mgr manager.Manager) reconcile.Reconciler {
 		Client:            cli,
 		scheme:            mgr.GetScheme(),
 		recorder:          recorder,
-		statusUpdater:     newStatusUpdater(cli),
+		statusUpdater:     clonesetstatus.NewStatusUpdater(cli),
 		controllerHistory: historyutil.NewHistory(cli),
 		revisionControl:   revisioncontrol.NewRevisionControl(),
 	}
@@ -178,7 +179,7 @@ type ReconcileCloneSet struct {
 
 	recorder          record.EventRecorder
 	controllerHistory history.Interface
-	statusUpdater     StatusUpdater
+	statusUpdater     clonesetstatus.Updater
 	revisionControl   revisioncontrol.Interface
 	syncControl       synccontrol.Interface
 }
@@ -336,14 +337,7 @@ func (r *ReconcileCloneSet) doReconcile(request reconcile.Request) (res reconcil
 		}
 	}
 
-	newStatus := appsv1alpha1.CloneSetStatus{
-		ObservedGeneration: instance.Generation,
-		CurrentRevision:    currentRevision.Name,
-		UpdateRevision:     updateRevision.Name,
-		CollisionCount:     new(int32),
-		LabelSelector:      selector.String(),
-	}
-	*newStatus.CollisionCount = collisionCount
+	newStatus := r.statusUpdater.CalculateStatus(instance, currentRevision.Name, updateRevision.Name, selector.String(), collisionCount, filteredPods)
 
 	if !isPreDownloadDisabled {
 		if currentRevision.Name != updateRevision.Name {
@@ -375,10 +369,10 @@ func (r *ReconcileCloneSet) doReconcile(request reconcile.Request) (res reconcil
 	}
 
 	// scale and update pods
-	syncErr := r.syncCloneSet(instance, &newStatus, currentRevision, updateRevision, revisions, filteredPods, filteredPVCs)
+	syncErr := r.syncCloneSet(instance, newStatus, currentRevision, updateRevision, revisions, filteredPods, filteredPVCs)
 
 	// update new status
-	if err = r.statusUpdater.UpdateCloneSetStatus(instance, &newStatus, filteredPods); err != nil {
+	if err = r.statusUpdater.UpdateCloneSetStatus(instance, newStatus, filteredPods); err != nil {
 		return reconcile.Result{}, err
 	}
 
@@ -433,7 +427,7 @@ func (r *ReconcileCloneSet) syncCloneSet(
 		return podsScaleErr
 	}
 
-	podsUpdateErr = r.syncControl.Update(updateSet, currentRevision, updateRevision, revisions, filteredPods, filteredPVCs)
+	podsUpdateErr = r.syncControl.Update(updateSet, newStatus, currentRevision, updateRevision, revisions, filteredPods, filteredPVCs)
 	if podsUpdateErr != nil {
 		newStatus.Conditions = append(newStatus.Conditions, appsv1alpha1.CloneSetCondition{
 			Type:               appsv1alpha1.CloneSetConditionFailedUpdate,
